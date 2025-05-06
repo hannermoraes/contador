@@ -367,25 +367,21 @@ export default function Page() {
                       <div className="flex gap-2">
                         <div className="relative w-full sm:w-[310px]">
                           <input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="hh:mm"
+                            type="time"
                             value={entry.start}
                             onChange={(e) => updateEntry(idx, "start", e.target.value)}
-                            className="w-full pr-10 pl-3 py-2 border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
+                            className="w-full sm:w-[310px] pr-3 pl-3 py-2 border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
                           />
                           <Clock className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
                         </div>
                         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                         <div className="relative w-full sm:w-[310px]">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            placeholder="hh:mm"
-                            value={entry.end}
-                            onChange={(e) => updateEntry(idx, "end", e.target.value)}
-                            className="w-full pr-10 pl-3 py-2 border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
-                          />
+                            <input
+                              type="time"
+                              value={entry.end}
+                              onChange={(e) => updateEntry(idx, "end", e.target.value)}
+                              className="w-full sm:w-[310px] pr-3 pl-3 py-2 border rounded-md bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring"
+                            />
                           <Clock className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground w-4 h-4" />
                         </div>
                           <div className="flex items-center justify-between gap-2">
