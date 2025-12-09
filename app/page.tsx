@@ -1,7 +1,7 @@
 ﻿// src/app/page.tsx
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
@@ -46,6 +46,42 @@ interface User {
   name: string
   workStart: string
   workEnd: string
+}
+
+function timeToMinutes(t: string) {
+  const [h, m] = t.split(":").map(Number)
+  return h * 60 + m
+}
+
+function minutesToTime(min: number) {
+  const h = String(Math.floor(min / 60)).padStart(2, "0")
+  const m = String(min % 60).padStart(2, "0")
+  return `${h}:${m}`
+}
+
+function getDurationInMinutes(start: string, end: string) {
+  const startMin = timeToMinutes(start)
+  const endMin = timeToMinutes(end)
+  return endMin >= startMin ? endMin - startMin : (1440 - startMin) + endMin
+}
+
+function splitRange(start: number, end: number) {
+  return start <= end ? [[start, end]] : [[start, 1440], [0, end]]
+}
+
+function overlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number) {
+  let totalOverlap = 0
+  const aRanges = splitRange(aStart, aEnd)
+  const bRanges = splitRange(bStart, bEnd)
+
+  aRanges.forEach(([a1, a2]) => {
+    bRanges.forEach(([b1, b2]) => {
+      const overlap = Math.min(a2, b2) - Math.max(a1, b1)
+      if (overlap > 0) totalOverlap += overlap
+    })
+  })
+
+  return totalOverlap
 }
 
 export default function Page() {
@@ -141,10 +177,6 @@ export default function Page() {
   }, [theme])
 
   useEffect(() => {
-    calculateTotal()
-  }, [entries, user])
-
-  useEffect(() => {
     localStorage.setItem("users", JSON.stringify(users))
   }, [users])
 
@@ -183,43 +215,7 @@ export default function Page() {
     }
   }, [selectedUser, users, entriesByUser])
 
-  function timeToMinutes(t: string) {
-    const [h, m] = t.split(":").map(Number)
-    return h * 60 + m
-  }
-
-  function minutesToTime(min: number) {
-    const h = String(Math.floor(min / 60)).padStart(2, "0")
-    const m = String(min % 60).padStart(2, "0")
-    return `${h}:${m}`
-  }
-
-  function getDurationInMinutes(start: string, end: string) {
-    const startMin = timeToMinutes(start)
-    const endMin = timeToMinutes(end)
-    return endMin >= startMin ? endMin - startMin : (1440 - startMin) + endMin
-  }
-
-  function splitRange(start: number, end: number) {
-    return start <= end ? [[start, end]] : [[start, 1440], [0, end]]
-  }
-
-  function overlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number) {
-    let totalOverlap = 0
-    const aRanges = splitRange(aStart, aEnd)
-    const bRanges = splitRange(bStart, bEnd)
-
-    aRanges.forEach(([a1, a2]) => {
-      bRanges.forEach(([b1, b2]) => {
-        const overlap = Math.min(a2, b2) - Math.max(a1, b1)
-        if (overlap > 0) totalOverlap += overlap
-      })
-    })
-
-    return totalOverlap
-  }
-
-  function calculateTotal() {
+  const calculateTotal = useCallback(() => {
     try {
       let totalMin = 0
       let totalExtra = 0
@@ -248,7 +244,11 @@ export default function Page() {
       setTotal("00:00")
       setExtra("00:00")
     }
-  }
+  }, [entries, user])
+
+  useEffect(() => {
+    calculateTotal()
+  }, [calculateTotal])
 
   function handleTimeCalc() {
     if (!calcStart || !calcEnd) return setWorked("00:00")
@@ -394,11 +394,11 @@ export default function Page() {
           </AlertDialogContent>
         </AlertDialog>
       )}
-       {confirmRemoveUser !== null && (
+      {confirmRemoveUser !== null && (
         <AlertDialog open={true} onOpenChange={() => setConfirmRemoveUser(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remover Funcionário &quot;{confirmRemoveUser}&quot;?</AlertDialogTitle>
+              <AlertDialogTitle>Remover Funcionário "{confirmRemoveUser}"?</AlertDialogTitle>
               <AlertDialogDescription>Essa Ação não pode ser desfeita.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -408,7 +408,7 @@ export default function Page() {
           </AlertDialogContent>
         </AlertDialog>
       )}
-      <main className="p-4 sm:p-6 max-w-5xl mx-auto grid grid-cols-1 gap-6">
+<main className="p-4 sm:p-6 max-w-5xl mx-auto grid grid-cols-1 gap-6">
         <div className="space-y-12">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
               <h1 className="text-2xl sm:text-3xl font-bold">Calculadora - Recursos Humanos</h1>
@@ -594,11 +594,5 @@ export default function Page() {
     </>
   )
 }
-
-
-
-
-
-
 
 
