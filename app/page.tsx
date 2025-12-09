@@ -1,4 +1,4 @@
-// src/app/page.tsx
+﻿// src/app/page.tsx
 "use client"
 
 import { useEffect, useState } from "react"
@@ -49,13 +49,18 @@ interface User {
 }
 
 export default function Page() {
-  const [entries, setEntries] = useState<Entry[]>([{ start: "", end: "", date: new Date(), note: "" }])
+  const defaultEntry = () => [{ start: "", end: "", date: new Date(), note: "" }]
+  const FALLBACK_USER = "__default__"
+
+  const [entries, setEntries] = useState<Entry[]>(defaultEntry())
+  const [entriesByUser, setEntriesByUser] = useState<Record<string, Entry[]>>({})
   const [total, setTotal] = useState("00:00")
   const [extra, setExtra] = useState("00:00")
   const [theme, setTheme] = useState<string | undefined>(undefined)
 
   const [user, setUser] = useState<User>({ name: "", workStart: "", workEnd: "" })
   const [users, setUsers] = useState<User[]>([])
+  const [selectedUser, setSelectedUser] = useState<string>("")
   const [comboOpen, setComboOpen] = useState(false)
   const [comboValue, setComboValue] = useState("")
 
@@ -70,24 +75,62 @@ export default function Page() {
   const [confirmRemoveUser, setConfirmRemoveUser] = useState<string | null>(null)
 
   useEffect(() => {
-    const savedUsers = localStorage.getItem("users")
-    const savedEntries = localStorage.getItem("hour-entries")
-    if (savedUsers) setUsers(JSON.parse(savedUsers))
-    if (savedEntries) {
+    const sanitizeEntries = (data: unknown): Entry[] => {
+      if (!Array.isArray(data)) return defaultEntry()
+      return data.map(entry => ({
+        start: entry?.start || "",
+        end: entry?.end || "",
+        date: entry?.date ? new Date(entry.date) : new Date(),
+        note: entry?.note || ""
+      }))
+    }
+
+    const savedUsersRaw = localStorage.getItem("users")
+    const parsedUsers: User[] = savedUsersRaw ? JSON.parse(savedUsersRaw) : []
+    if (parsedUsers.length) setUsers(parsedUsers)
+
+    const savedMap = localStorage.getItem("hour-entries-by-user")
+    const savedLegacy = localStorage.getItem("hour-entries")
+    let initialMap: Record<string, Entry[]> = {}
+
+    if (savedMap) {
       try {
-        const parsed: Entry[] = JSON.parse(savedEntries)
-        const sanitized = parsed.map(entry => ({
-          ...entry,
-          date: new Date(entry.date),
-          note: entry.note || ""
-        }))
-        setEntries(sanitized)
+        const parsed = JSON.parse(savedMap) as Record<string, Entry[]>
+        const sanitizedEntries: Record<string, Entry[]> = {}
+        Object.keys(parsed).forEach(key => {
+          sanitizedEntries[key] = sanitizeEntries(parsed[key])
+        })
+        initialMap = sanitizedEntries
       } catch (e) {
-        console.error("Erro ao carregar entradas do localStorage", e)
+        console.error("Erro ao carregar entradas por usuário do localStorage", e)
+      }
+    } else if (savedLegacy) {
+      try {
+        const parsedLegacy: Entry[] = JSON.parse(savedLegacy)
+        initialMap = { [FALLBACK_USER]: sanitizeEntries(parsedLegacy) }
+      } catch (e) {
+        console.error("Erro ao carregar entradas legadas do localStorage", e)
       }
     }
+
+    setEntriesByUser(initialMap)
+
+    const savedCurrentUser = localStorage.getItem("current-user")
     const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches
-    setTheme(prefersDark ? "dark" : "light")
+    const savedTheme = localStorage.getItem("theme")
+    const startTheme = savedTheme === "dark" || savedTheme === "light" ? savedTheme : prefersDark ? "dark" : "light"
+    setTheme(startTheme)
+    document.documentElement.classList.toggle("dark", startTheme === "dark")
+
+    const initialUser = savedCurrentUser || (parsedUsers[0]?.name ?? "")
+    const activeKey = initialUser || FALLBACK_USER
+    const initialEntries = initialMap[activeKey] && initialMap[activeKey].length ? initialMap[activeKey] : defaultEntry()
+
+    if (initialUser) {
+      setSelectedUser(initialUser)
+      setComboValue(initialUser)
+    }
+    setEntries(initialEntries)
   }, [])
 
   useEffect(() => {
@@ -98,13 +141,47 @@ export default function Page() {
   }, [theme])
 
   useEffect(() => {
-    localStorage.setItem("hour-entries", JSON.stringify(entries))
     calculateTotal()
   }, [entries, user])
 
   useEffect(() => {
     localStorage.setItem("users", JSON.stringify(users))
   }, [users])
+
+  useEffect(() => {
+    localStorage.setItem("hour-entries-by-user", JSON.stringify(entriesByUser))
+  }, [entriesByUser])
+
+  useEffect(() => {
+    if (selectedUser) {
+      localStorage.setItem("current-user", selectedUser)
+    } else {
+      localStorage.removeItem("current-user")
+    }
+  }, [selectedUser])
+
+  useEffect(() => {
+    const activeKey = selectedUser || FALLBACK_USER
+    setEntriesByUser(prev => ({
+      ...prev,
+      [activeKey]: entries
+    }))
+  }, [entries, selectedUser])
+
+  useEffect(() => {
+    if (!selectedUser) return
+    const selected = users.find(u => u.name === selectedUser)
+    if (selected) setUser(selected)
+  }, [selectedUser, users])
+
+  useEffect(() => {
+    if (!selectedUser && users.length > 0) {
+      const firstUser = users[0].name
+      setSelectedUser(firstUser)
+      setComboValue(firstUser)
+      setEntries(entriesByUser[firstUser] && entriesByUser[firstUser].length ? entriesByUser[firstUser] : defaultEntry())
+    }
+  }, [selectedUser, users, entriesByUser])
 
   function timeToMinutes(t: string) {
     const [h, m] = t.split(":").map(Number)
@@ -123,6 +200,25 @@ export default function Page() {
     return endMin >= startMin ? endMin - startMin : (1440 - startMin) + endMin
   }
 
+  function splitRange(start: number, end: number) {
+    return start <= end ? [[start, end]] : [[start, 1440], [0, end]]
+  }
+
+  function overlapMinutes(aStart: number, aEnd: number, bStart: number, bEnd: number) {
+    let totalOverlap = 0
+    const aRanges = splitRange(aStart, aEnd)
+    const bRanges = splitRange(bStart, bEnd)
+
+    aRanges.forEach(([a1, a2]) => {
+      bRanges.forEach(([b1, b2]) => {
+        const overlap = Math.min(a2, b2) - Math.max(a1, b1)
+        if (overlap > 0) totalOverlap += overlap
+      })
+    })
+
+    return totalOverlap
+  }
+
   function calculateTotal() {
     try {
       let totalMin = 0
@@ -139,9 +235,9 @@ export default function Page() {
         if (workStartMin !== null && workEndMin !== null) {
           const startMin = timeToMinutes(start)
           const endMin = timeToMinutes(end)
-          const extraBefore = startMin < workStartMin ? workStartMin - startMin : 0
-          const extraAfter = (startMin > endMin || endMin > workEndMin) ? (endMin >= startMin ? endMin - workEndMin : (1440 - workEndMin) + endMin) : 0
-          totalExtra += extraBefore + extraAfter
+          const workedInsideSchedule = overlapMinutes(startMin, endMin, workStartMin, workEndMin)
+          const extraOutsideSchedule = Math.max(duration - workedInsideSchedule, 0)
+          totalExtra += extraOutsideSchedule
         }
       })
 
@@ -156,7 +252,12 @@ export default function Page() {
 
   function handleTimeCalc() {
     if (!calcStart || !calcEnd) return setWorked("00:00")
-    const pauseMin = pauseType === "h" ? parseInt(pause || "0") * 60 : parseInt(pause || "0")
+    const pauseValue = Number(pause || "0")
+    if (!Number.isFinite(pauseValue) || pauseValue < 0) {
+      setWorked("00:00")
+      return toast.error("Informe um valor válido para a pausa.")
+    }
+    const pauseMin = pauseType === "h" ? pauseValue * 60 : pauseValue
     const duration = getDurationInMinutes(calcStart, calcEnd) - pauseMin
     setWorked(minutesToTime(Math.max(duration, 0)))
   }
@@ -204,22 +305,50 @@ export default function Page() {
 
   function addUser() {
     if (!user.name || !user.workStart || !user.workEnd) return toast.error("Preencha todos os campos.")
-    const exists = users.find(u => u.name === user.name)
+    const trimmedName = user.name.trim()
+    const exists = users.find(u => u.name === trimmedName)
     if (exists) {
-      setUsers(users.map(u => (u.name === user.name ? user : u)))
+      setUsers(users.map(u => (u.name === trimmedName ? { ...user, name: trimmedName } : u)))
+      setSelectedUser(trimmedName)
+      setComboValue(trimmedName)
       toast.success("Funcionário atualizado!")
     } else {
-      setUsers([...users, user])
+      setUsers([...users, { ...user, name: trimmedName }])
+      setEntriesByUser(prev => ({
+        ...prev,
+        [trimmedName]: prev[trimmedName] ?? defaultEntry()
+      }))
+      setEntries(defaultEntry())
+      setSelectedUser(trimmedName)
+      setComboValue(trimmedName)
       toast.success("Funcionário adicionado!")
     }
   }
 
   function confirmRemoveUserAction() {
     if (confirmRemoveUser !== null) {
-      setUsers(users.filter(u => u.name !== confirmRemoveUser))
-      toast.warning(`Funcionário "${confirmRemoveUser}" removido.`)
+      const remainingUsers = users.filter(u => u.name !== confirmRemoveUser)
+      setUsers(remainingUsers)
+      setEntriesByUser(prev => {
+        const { [confirmRemoveUser]: removed, ...rest } = prev
+        return rest
+      })
       if (user.name === confirmRemoveUser) setUser({ name: "", workStart: "", workEnd: "" })
       if (comboValue === confirmRemoveUser) setComboValue("")
+      if (selectedUser === confirmRemoveUser) {
+        const fallback = remainingUsers[0]
+        if (fallback) {
+          setSelectedUser(fallback.name)
+          setUser(fallback)
+          setEntries(entriesByUser[fallback.name] ?? defaultEntry())
+          setComboValue(fallback.name)
+        } else {
+          setSelectedUser("")
+          setEntries(defaultEntry())
+          setComboValue("")
+        }
+      }
+      toast.warning(`Funcionário "${confirmRemoveUser}" removido.`)
       setConfirmRemoveUser(null)
     }
   }
@@ -228,6 +357,8 @@ export default function Page() {
     const selected = users.find(u => u.name === name)
     if (selected) {
       setUser(selected)
+      setSelectedUser(name)
+      setEntries(entriesByUser[name] ?? defaultEntry())
       setComboValue(name)
     }
   }
@@ -240,7 +371,7 @@ export default function Page() {
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Limpar todas as entradas?</AlertDialogTitle>
-              <AlertDialogDescription>Essa ação não pode ser desfeita.</AlertDialogDescription>
+              <AlertDialogDescription>Essa Ação não pode ser desfeita.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -253,8 +384,8 @@ export default function Page() {
         <AlertDialog open={true} onOpenChange={() => setConfirmRemoveIndex(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remover este horário?</AlertDialogTitle>
-              <AlertDialogDescription>Essa ação não pode ser desfeita.</AlertDialogDescription>
+              <AlertDialogTitle>Remover este Horário?</AlertDialogTitle>
+              <AlertDialogDescription>Essa Ação não pode ser desfeita.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -267,8 +398,8 @@ export default function Page() {
         <AlertDialog open={true} onOpenChange={() => setConfirmRemoveUser(null)}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remover funcionário &quot;{confirmRemoveUser}&quot;?</AlertDialogTitle>
-              <AlertDialogDescription>Essa ação não pode ser desfeita.</AlertDialogDescription>
+              <AlertDialogTitle>Remover Funcionário &quot;{confirmRemoveUser}&quot;?</AlertDialogTitle>
+              <AlertDialogDescription>Essa Ação não pode ser desfeita.</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Cancelar</AlertDialogCancel>
@@ -280,7 +411,7 @@ export default function Page() {
       <main className="p-4 sm:p-6 max-w-5xl mx-auto grid grid-cols-1 gap-6">
         <div className="space-y-12">
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-4">
-              <h1 className="text-2xl sm:text-3xl font-bold">Criar Sign - Recursos Humanos</h1>
+              <h1 className="text-2xl sm:text-3xl font-bold">Calculadora - Recursos Humanos</h1>
               <Switch checked={theme === "dark"} onCheckedChange={(v) => setTheme(v ? "dark" : "light")} />
             </div>
 
@@ -296,13 +427,13 @@ export default function Page() {
                       role="combobox"
                       aria-expanded={comboOpen}
                       className="w-[250px] justify-between truncate">
-                      <span className="truncate max-w-[180px]">{comboValue || "Selecionar funcionário"}</span>
+                      <span className="truncate max-w-[180px]">{comboValue || "Selecionar Funcionário"}</span>
                       <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                     </Button>
                   </PopoverTrigger>
                   <PopoverContent className="w-[250px] p-0">
                     <Command>
-                      <CommandInput placeholder="Buscar funcionário..." />
+                      <CommandInput placeholder="Buscar Funcionário..." />
                       <CommandList>
                         <CommandEmpty>Nenhum encontrado.</CommandEmpty>
                         <CommandGroup>
@@ -339,16 +470,16 @@ export default function Page() {
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
-                <Label htmlFor="Name" className="p-2">Nome</Label>
-                  <Input placeholder="Nome" value={user.name} onChange={(e) => setUser({ ...user, name: e.target.value })} />
+                <Label htmlFor="user-name" className="p-2">Nome</Label>
+                  <Input id="user-name" placeholder="Nome" value={user.name} onChange={(e) => setUser({ ...user, name: e.target.value })} />
                 </div>
                 <div>
                 <Label htmlFor="timeStart" className="p-2">Início</Label>
-                  <Input type="time" value={user.workStart} onChange={(e) => setUser({ ...user, workStart: e.target.value })} />
+                  <Input id="timeStart" type="time" value={user.workStart} onChange={(e) => setUser({ ...user, workStart: e.target.value })} />
                 </div>
                 <div>
                 <Label htmlFor="timeEnd" className="p-2">Fim</Label>
-                  <Input type="time" value={user.workEnd} onChange={(e) => setUser({ ...user, workEnd: e.target.value })} />
+                  <Input id="timeEnd" type="time" value={user.workEnd} onChange={(e) => setUser({ ...user, workEnd: e.target.value })} />
                 </div>
               </div>
             </CardContent>
@@ -463,3 +594,11 @@ export default function Page() {
     </>
   )
 }
+
+
+
+
+
+
+
+
